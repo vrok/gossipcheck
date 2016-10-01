@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"net/rpc"
 	"os"
+	"sort"
 
 	"gossipcheck/server"
 )
@@ -16,6 +17,12 @@ var (
 	serverAddr = flag.String("server", "127.0.0.1:5924", "The address where CLI client connects to")
 	checksFile = flag.String("file", "", "JSON file with checks to run")
 )
+
+type sliceOfParams []*checks.Params
+
+func (s sliceOfParams) Len() int           { return len(s) }
+func (s sliceOfParams) Less(i, j int) bool { return s[i].Name < s[j].Name }
+func (s sliceOfParams) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 
 func loadChecks() ([]*checks.Params, error) {
 	if *checksFile == "" {
@@ -36,9 +43,14 @@ func loadChecks() ([]*checks.Params, error) {
 	list := make([]*checks.Params, 0, len(p))
 
 	for name, params := range p {
+		params := params
 		params.Name = name
 		list = append(list, &params)
 	}
+
+	// Sort alphabetically by name. It's the order checks in a batch will be run.
+	sort.Sort(sliceOfParams(list))
+
 	return list, nil
 }
 
