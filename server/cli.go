@@ -9,7 +9,10 @@ import (
 	"net/rpc"
 )
 
-type CLIServer struct{}
+type CLIServer struct {
+	// Local node
+	node *Node
+}
 
 type Args struct {
 	Params []*checks.Params
@@ -18,8 +21,10 @@ type Args struct {
 type Result struct{}
 
 func (s *CLIServer) RunGlobalCheck(args *Args, r *Result) error {
-	fmt.Printf("ZZZ RUN CHECK %#v\n", *args)
-	return nil
+	fmt.Printf("ZZZ Run global check %#v\n", *args)
+
+	msg := s.node.NewMessage(RunChecks, args.Params)
+	return s.node.ProcessMsg(msg)
 }
 
 func (s *CLIServer) RunLocalCheck(args *Args, r *Result) error {

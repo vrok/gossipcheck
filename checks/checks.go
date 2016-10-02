@@ -110,6 +110,11 @@ func (fe checkEmpty) Run(p *Params) error {
 
 var nameToCheck map[string]Check
 
+func AddCheck(ch Check) {
+	gob.Register(ch)
+	nameToCheck[ch.Type()] = ch
+}
+
 func init() {
 	nameToCheck = make(map[string]Check)
 
@@ -120,8 +125,7 @@ func init() {
 		procRunningCheck{},
 		checkEmpty{},
 	} {
-		gob.Register(ch)
-		nameToCheck[ch.Type()] = ch
+		AddCheck(ch)
 	}
 }
 
