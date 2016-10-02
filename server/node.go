@@ -1,6 +1,8 @@
 package server
 
 import (
+	"bytes"
+	"encoding/gob"
 	"errors"
 	"fmt"
 	"gossipcheck/checks"
@@ -19,6 +21,12 @@ type Node struct {
 	config  *memberlist.Config
 	list    *memberlist.Memberlist
 	history *History
+	// Number of nodes that messages are send directly from a node.
+	// Has the same meaning as GossipNodes in the memberlist library,
+	// but is used for checks. By default, GossipNodes is set to the
+	// same value as in memberlist (can be set to something different,
+	// but only before Node.Join is called).
+	GossipNodes int
 }
 
 // Implements memberlist.Delegate
@@ -28,7 +36,19 @@ type delegate struct {
 
 func (d *delegate) NodeMeta(limit int) []byte { return nil }
 func (d *delegate) NotifyMsg(msg []byte) {
-	fmt.Printf("ZZZ Received msg %s\n", string(msg))
+	fmt.Printf("ZZZ Received msg %d\n", len(msg))
+
+	buf := bytes.NewBuffer(msg)
+	dec := gob.NewDecoder(buf)
+
+	var m Message
+	err := dec.Decode(&m)
+	if err != nil {
+		log.Println("Received a malformed message")
+		return
+	}
+
+	d.n.ProcessMsg(&m)
 }
 func (d *delegate) GetBroadcasts(overhead, limit int) [][]byte { return nil }
 func (d *delegate) LocalState(join bool) []byte                { return nil }
@@ -69,6 +89,7 @@ func NewNode(bind string) (*Node, error) {
 	config.Delegate = &delegate{n: node}
 
 	node.config = config
+	node.GossipNodes = config.GossipNodes
 
 	fmt.Printf("ZZZ Delegate %#v\n", config.Delegate)
 	return node, nil
@@ -109,15 +130,80 @@ func (n *Node) NewMessage(typ MsgType, params []*checks.Params) *Message {
 	}
 }
 
+func selectPeers(count int, members []*memberlist.Node, excepts []string) []*memberlist.Node {
+	l := len(members)
+	var selected []*memberlist.Node
+
+	maxCount := len(members) - len(excepts)
+	if count > maxCount {
+		count = maxCount
+	}
+
+outer:
+	// l*5 is a pretty exhaustive search, memberlist does sth similar, for small
+	// sizes it's useful and for large ones it's not a problem (because
+	// count << len(members)).
+	// TODO(vrok): It can still sometimes return too few items, it's possible
+	// to do it deterministically with O(k log k) (or maybe better) and not
+	// necessarily O(n) (k - number of peers, n - cluster size).
+	for i := 0; i < l*5 && len(selected) < count; i++ {
+		n := rand.Intn(l)
+
+		name := members[n].Name
+
+		for _, e := range excepts {
+			if e == name {
+				continue outer
+			}
+		}
+
+		excepts = append(excepts, name)
+		selected = append(selected, members[n])
+	}
+	return selected
+}
+
+func (n *Node) SendMsg(m *Message, members []*memberlist.Node) error {
+	fmt.Printf("ZZZ Send to %d members\n", len(members))
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+
+	err := enc.Encode(m)
+	if err != nil {
+		return err
+	}
+
+	data := buf.Bytes()
+
+	errCount := 0
+	for _, node := range members {
+		err := n.list.SendToTCP(node, data)
+		if err != nil {
+			errCount++
+		}
+	}
+
+	if errCount == len(members) {
+		// Return error only if the message wasn't sent even once.
+		return errors.New("Sending message failed")
+	}
+
+	return nil
+}
+
 func (n *Node) ProcessMsg(m *Message) error {
 	if n.history.Observe(m.ID) {
 		// Already processed a message with this ID.
+		log.Print("Received an old message")
 		return nil
 	}
 
 	switch m.Type {
 	case RunChecks:
-		panic("todo")
+		log.Print("Received new checks to run")
+		peers := selectPeers(n.GossipNodes, n.Members(), []string{m.SrcNode, m.OrigNode, n.name})
+		m.SrcNode = n.name
+		return n.SendMsg(m, peers)
 	case InstallChecks:
 		panic("todo")
 	case DeleteChecks:

@@ -94,10 +94,67 @@ loop:
 		fmt.Printf("ZZZ node %d has %d peers\n", i, len(n.Members()))
 	}
 
-	nodes[0].Send([]byte("bla"))
-	nodes[0].Send([]byte("bla"))
+	msg := nodes[0].NewMessage(RunChecks, []*checks.Params{
+		&checks.Params{Type: "check_empty"},
+	})
+
+	nodes[0].SendMsg(msg, nodes[0].Members()[:2])
+
+	//nodes[0].Send([]byte("bla"))
 
 	//time.Sleep(2 * time.Second)
 
 	time.Sleep(5 * time.Second)
+}
+
+func TestSelectPeers(t *testing.T) {
+	cases := []struct {
+		members []*memberlist.Node
+		excepts []string
+		k       int
+	}{
+		{
+			[]*memberlist.Node{
+				&memberlist.Node{Name: "a"},
+				&memberlist.Node{Name: "b"},
+				&memberlist.Node{Name: "c"},
+				&memberlist.Node{Name: "d"},
+				&memberlist.Node{Name: "e"},
+			},
+			[]string{"a", "c"},
+			2,
+		},
+		{
+			[]*memberlist.Node{
+				&memberlist.Node{Name: "a"},
+				&memberlist.Node{Name: "b"},
+			},
+			[]string{},
+			2,
+		},
+	}
+
+	for _, c := range cases {
+		r := selectPeers(c.k, c.members, c.excepts)
+
+		if len(r) != c.k {
+			t.Fatalf("Wrong number of members selected: %d", len(r))
+		}
+
+		for i := 0; i < len(r); i++ {
+			for j := i + 1; j < len(r); j++ {
+				if r[i].Name == r[j].Name {
+					t.Fatal("The same member selected more than once")
+				}
+			}
+		}
+
+		for _, e := range c.excepts {
+			for _, m := range r {
+				if e == m.Name {
+					t.Fatal("Excluded member selected")
+				}
+			}
+		}
+	}
 }
