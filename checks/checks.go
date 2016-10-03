@@ -3,9 +3,10 @@ package checks
 import (
 	"encoding/gob"
 	"errors"
-	"fmt"
+	"io"
 	"log"
 	"os"
+	"strings"
 	"sync"
 )
 
@@ -107,19 +108,68 @@ type fileExistsCheck struct{}
 func (fe fileExistsCheck) Type() CheckType { return CheckFileExists }
 
 func (fe fileExistsCheck) Run(p *Params) error {
-	if _, err := os.Stat(p.Path); err != nil {
-		return fmt.Errorf("File '%s' doesn't exist", p.Path)
+	if _, err := os.Stat(p.Path); os.IsNotExist(err) {
+		return err
 	}
 	return nil
 }
 
-type fileContainsCheck struct{}
+type fileContainsCheck struct {
+	// Batch size is modifiable for tests.
+	batchMult int
+}
 
 func (fc fileContainsCheck) Type() CheckType { return CheckFileContains }
 
 func (fc fileContainsCheck) Run(p *Params) error {
-	log.Println("file contains check")
-	return nil
+	f, err := os.Open(p.Path)
+	if err != nil {
+		return errors.New("Error opening file: " + err.Error())
+	}
+	defer f.Close()
+
+	// Search file in batches. Adjacent batches have an overlap of len(sep) size.
+	// TODO: Copy either Rabin-Karp or Boyer-Moore from Go's strings and make it work
+	// with io.Reader (though this should be fast too).
+	sep := p.Check
+
+	batchMult := fc.batchMult
+	if batchMult == 0 {
+		batchMult = 2000
+	}
+
+	batchSize := len(sep) * batchMult
+	buf := make([]byte, batchSize)
+
+	start := 0
+
+	for {
+		n, err := f.Read(buf[start:])
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+
+		end := start + n
+
+		// Use the strings module within batches (it uses Rabin-Karp).
+		if strings.Contains(string(buf[:end]), sep) {
+			return nil
+		}
+
+		overlap := len(sep)
+		if overlap > end {
+			start = end
+			continue
+		}
+
+		copy(buf[:overlap], buf[end-overlap:end])
+		start = overlap
+	}
+
+	return errors.New("File doesn't contain given text")
 }
 
 type procRunningCheck struct{}
@@ -150,8 +200,8 @@ var (
 	maxID       byte
 )
 
-// AddCheck register a checker. Don't add checkers from places other than init()
-// and tests initialisation.
+// AddCheck registers a checker. Don't use it after any node started working
+// (init and tests initialisation are okay).
 func AddCheck(ch Checker) {
 	gob.Register(ch)
 	typeToCheck[ch.Type()] = ch
