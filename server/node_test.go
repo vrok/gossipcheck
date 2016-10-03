@@ -20,9 +20,9 @@ type checkFake struct {
 	mu              sync.Mutex
 }
 
-func (fe checkFake) Type() checks.CheckType { return "fake" }
+func (fe *checkFake) Type() checks.CheckType { return "fake" }
 
-func (fe checkFake) Run(p *checks.Params) error {
+func (fe *checkFake) Run(p *checks.Params) error {
 	log.Print("Fake check running")
 
 	fe.wg.Done()
@@ -63,7 +63,7 @@ func testProtocol(t *testing.T, nodeCount, gossipGroup int) {
 	wg := &sync.WaitGroup{}
 	wg.Add(nodeCount)
 
-	chk := checkFake{wg: wg, fails: 1}
+	chk := &checkFake{wg: wg, fails: 1}
 	checks.AddCheck(chk)
 
 	for i := 0; i < nodeCount; i++ {

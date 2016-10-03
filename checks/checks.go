@@ -9,16 +9,20 @@ import (
 	"sync"
 )
 
+// CheckType represents the type of check to be performed.
+// There's a fixed number of check types, so there's an opportunity to save
+// bandwidth in the gossip protocol by avoiding sending full type names,
+// hence the custom gob encoding.
 type CheckType string
 
+// Pre-defined checks. It is possible to add other ones, e.g. tests do that.
 const (
 	CheckFileContains CheckType = "file_contains"
 	CheckFileExists             = "file_exists"
-	CheckProcRunning            = "proc_running"
+	CheckProcRunning            = "process_running"
 )
 
-// There's a fixed number of check types, so there's an opportunity to save
-// bandwidth in the gossip protocol by avoiding sending full type names.
+// GobEncode is here to implement gob.GobEncoder. See the docs for CheckType to know why.
 func (ct CheckType) GobEncode() ([]byte, error) {
 	id, ok := typeToID[ct]
 	if !ok {
@@ -27,6 +31,7 @@ func (ct CheckType) GobEncode() ([]byte, error) {
 	return []byte{id}, nil
 }
 
+// GobDecode is here to implement gob.GobDecoder. See the docs for CheckType to know why.
 func (ct *CheckType) GobDecode(b []byte) error {
 	if len(b) != 1 {
 		return errors.New("Bad lengh")
@@ -39,6 +44,7 @@ func (ct *CheckType) GobDecode(b []byte) error {
 	return nil
 }
 
+// Params describes one check. They can be sent in batches, see ParamsGroup.
 type Params struct {
 	// Name of the check, should be unique.
 	Name string
@@ -54,6 +60,7 @@ type Params struct {
 	Action string
 }
 
+// ParamsGroup describes a batch of checks to be performed.
 type ParamsGroup []*Params
 
 // Run all checks from a group and return all non-nil errors.
@@ -89,14 +96,15 @@ func (pg ParamsGroup) Run() (errs []error) {
 	return errs
 }
 
-type Check interface {
+// Checker is the interface whose implementations can run checks of their types.
+type Checker interface {
 	Type() CheckType
 	Run(*Params) error
 }
 
 type fileExistsCheck struct{}
 
-func (fe fileExistsCheck) Type() CheckType { return "file_exists" }
+func (fe fileExistsCheck) Type() CheckType { return CheckFileExists }
 
 func (fe fileExistsCheck) Run(p *Params) error {
 	if _, err := os.Stat(p.Path); err != nil {
@@ -107,7 +115,7 @@ func (fe fileExistsCheck) Run(p *Params) error {
 
 type fileContainsCheck struct{}
 
-func (fc fileContainsCheck) Type() CheckType { return "file_contains" }
+func (fc fileContainsCheck) Type() CheckType { return CheckFileContains }
 
 func (fc fileContainsCheck) Run(p *Params) error {
 	log.Println("file contains check")
@@ -116,7 +124,7 @@ func (fc fileContainsCheck) Run(p *Params) error {
 
 type procRunningCheck struct{}
 
-func (fc procRunningCheck) Type() CheckType { return "process_running" }
+func (fc procRunningCheck) Type() CheckType { return CheckProcRunning }
 
 func (fc procRunningCheck) Run(p *Params) error {
 	log.Println("proc running check")
@@ -136,14 +144,15 @@ func (fe checkEmpty) Run(p *Params) error {
 }
 
 var (
-	typeToCheck = make(map[CheckType]Check)
+	typeToCheck = make(map[CheckType]Checker)
 	typeToID    = make(map[CheckType]byte)
 	idToType    = make(map[byte]CheckType)
 	maxID       byte
 )
 
-// Don't add checks in places other than init() and tests initialisation.
-func AddCheck(ch Check) {
+// AddCheck register a checker. Don't add checkers from places other than init()
+// and tests initialisation.
+func AddCheck(ch Checker) {
 	gob.Register(ch)
 	typeToCheck[ch.Type()] = ch
 	typeToID[ch.Type()] = maxID
@@ -155,7 +164,7 @@ func init() {
 	// Register all checks. This is the only place where new checks have to be added.
 	// WARNING: Changing order in which checks are added chacnges the way they are
 	// serialized on the wire.
-	for _, ch := range []Check{
+	for _, ch := range []Checker{
 		fileExistsCheck{},
 		fileContainsCheck{},
 		procRunningCheck{},
@@ -165,8 +174,8 @@ func init() {
 	}
 }
 
-// Return a check with given name.
-func GetCheck(typ CheckType) (ch Check, ok bool) {
+// GetCheck returns a check with given name (if it was registered).
+func GetCheck(typ CheckType) (ch Checker, ok bool) {
 	ch, ok = typeToCheck[typ]
 	return
 }
