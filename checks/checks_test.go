@@ -56,3 +56,38 @@ func TestCustomGob(t *testing.T) {
 		}
 	}
 }
+
+func TestParamsGroup(t *testing.T) {
+	cases := []struct {
+		params ParamsGroup
+		errors int
+	}{
+		{
+			ParamsGroup{
+				&Params{Type: "check_empty", Check: "not_empty"}, // Fail
+				&Params{Type: "check_empty"},                     // Succeed
+				&Params{Type: "check_empty", Check: "not_empty"}, // Fail
+			},
+			2,
+		},
+		{
+			ParamsGroup{
+				&Params{Type: "check_empty"}, // Succeed
+			},
+			0,
+		},
+		{
+			ParamsGroup{
+				&Params{Type: "check_empty", Check: "not_empty"}, // Fail
+			},
+			1,
+		},
+	}
+
+	for _, c := range cases {
+		errs := c.params.Run()
+		if len(errs) != c.errors {
+			t.Fatalf("Wrong number of errors: %d", len(errs))
+		}
+	}
+}

@@ -5,12 +5,12 @@ import (
 	"encoding/gob"
 	"errors"
 	"fmt"
-	"gossipcheck/checks"
 	"log"
 	"math/rand"
 	"net"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/hashicorp/memberlist"
 )
@@ -27,6 +27,12 @@ type Node struct {
 	// same value as in memberlist (can be set to something different,
 	// but only before Node.Join is called).
 	GossipNodes int
+	// Every AdvertDelay, a node advertises to a number of random nodes
+	// what messages it has. Nodes can then request missing ones.
+	AdvertInterval time.Duration
+
+	// Closing this chan shuts everything down.
+	done chan struct{}
 }
 
 // Implements memberlist.Delegate
@@ -36,8 +42,6 @@ type delegate struct {
 
 func (d *delegate) NodeMeta(limit int) []byte { return nil }
 func (d *delegate) NotifyMsg(msg []byte) {
-	fmt.Printf("ZZZ Received msg %d\n", len(msg))
-
 	buf := bytes.NewBuffer(msg)
 	dec := gob.NewDecoder(buf)
 
@@ -77,7 +81,8 @@ func NewNode(bind string) (*Node, error) {
 
 	node := &Node{
 		port:    int(port),
-		history: NewHistory(1000000),
+		history: NewHistory(1000000, 2000),
+		done:    make(chan struct{}),
 	}
 
 	config := memberlist.DefaultLocalConfig()
@@ -90,14 +95,17 @@ func NewNode(bind string) (*Node, error) {
 
 	node.config = config
 	node.GossipNodes = config.GossipNodes
+	//node.GossipNodes = 1
+	// Don't use exactly the same value as GossipInterval, lest the network usage
+	// spikes overlap.
+	//node.AdvertInterval = config.GossipInterval * 3 / 2
+	node.AdvertInterval = 20 * time.Second
 
-	fmt.Printf("ZZZ Delegate %#v\n", config.Delegate)
 	return node, nil
 }
 
 func (n *Node) Join(peers []string) error {
 	var err error
-
 	for i := range peers {
 		// No port of a peer specified, use the same as the local node
 		if strings.IndexByte(peers[i], ':') == -1 {
@@ -116,17 +124,17 @@ func (n *Node) Join(peers []string) error {
 	}
 
 	log.Printf("Node %s started, %d peers responded", n.config.Name, cnt)
+	n.runAdvertiser()
 	return nil
 }
 
 // NewMessage creates a new message that originates in the local node.
-func (n *Node) NewMessage(typ MsgType, params []*checks.Params) *Message {
+func (n *Node) NewMessage(typ MsgType) *Message {
 	return &Message{
 		Type:     typ,
 		ID:       randStr(16),
 		OrigNode: n.name,
 		SrcNode:  n.name,
-		Params:   params,
 	}
 }
 
@@ -164,7 +172,6 @@ outer:
 }
 
 func (n *Node) SendMsg(m *Message, members []*memberlist.Node) error {
-	fmt.Printf("ZZZ Send to %d members\n", len(members))
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
 
@@ -175,10 +182,12 @@ func (n *Node) SendMsg(m *Message, members []*memberlist.Node) error {
 
 	data := buf.Bytes()
 
+	// TODO: Check if SendToTCP is thread safe, if so then send it in parallel
 	errCount := 0
 	for _, node := range members {
 		err := n.list.SendToTCP(node, data)
 		if err != nil {
+			log.Print("Error sending message: " + err.Error())
 			errCount++
 		}
 	}
@@ -191,8 +200,46 @@ func (n *Node) SendMsg(m *Message, members []*memberlist.Node) error {
 	return nil
 }
 
+func (n *Node) Shutdown() {
+	close(n.done)
+	if err := n.list.Shutdown(); err != nil {
+		log.Print("Error shutting down: " + err.Error())
+	}
+}
+
+func (n *Node) runAdvertiser() {
+	go func() {
+		for {
+			select {
+			case <-time.After(n.AdvertInterval):
+				msg := n.NewMessage(AdvertiseMsgs)
+				msg.MessageIDs = n.history.MessageIDs()
+
+				peers := selectPeers(n.GossipNodes, n.Members(), []string{n.name})
+				err := n.SendMsg(msg, peers)
+				if err != nil {
+					log.Print("Error advertising messages: " + err.Error())
+				}
+			case <-n.done:
+				return
+			}
+		}
+	}()
+}
+
+func (n *Node) findPeer(id string) *memberlist.Node {
+	// TODO(vrok): Number of nodes can be big, this linear search is lame. It would be easy
+	// to wrap it in a cache once this pops up during profiling.
+	for _, peer := range n.Members() {
+		if peer.Name == id {
+			return peer
+		}
+	}
+	return nil
+}
+
 func (n *Node) ProcessMsg(m *Message) error {
-	if n.history.Observe(m.ID) {
+	if n.history.Observe(m) {
 		// Already processed a message with this ID.
 		log.Print("Received an old message")
 		return nil
@@ -201,9 +248,41 @@ func (n *Node) ProcessMsg(m *Message) error {
 	switch m.Type {
 	case RunChecks:
 		log.Print("Received new checks to run")
+		go m.Params.Run()
 		peers := selectPeers(n.GossipNodes, n.Members(), []string{m.SrcNode, m.OrigNode, n.name})
 		m.SrcNode = n.name
 		return n.SendMsg(m, peers)
+	case AdvertiseMsgs:
+		missing := n.history.MissingIDs(m.MessageIDs)
+		if len(missing) > 0 {
+			reqMsg := n.NewMessage(ReqestMsgs)
+			reqMsg.MessageIDs = missing
+
+			peer := n.findPeer(m.OrigNode)
+			if peer == nil {
+				return errors.New("Requesting node disappeared")
+			}
+			return n.SendMsg(reqMsg, []*memberlist.Node{peer})
+		}
+	case ReqestMsgs:
+		msgs := n.history.GetMessages(m.MessageIDs)
+		if len(msgs) == 0 {
+			return nil
+		}
+		peer := n.findPeer(m.OrigNode)
+		if peer == nil {
+			return errors.New("Requesting node disappeared")
+		}
+
+		for _, m := range msgs {
+			m.SrcNode = n.name // Actually, this should already be set
+			err := n.SendMsg(m, []*memberlist.Node{peer})
+			if err != nil {
+				// Stop on the first error, if something's wrong with the network
+				// then further tries will probably fail too.
+				return err
+			}
+		}
 	case InstallChecks:
 		panic("todo")
 	case DeleteChecks:

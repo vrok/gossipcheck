@@ -15,15 +15,14 @@ type CLIServer struct {
 }
 
 type Args struct {
-	Params []*checks.Params
+	Params checks.ParamsGroup
 }
 
 type Result struct{}
 
 func (s *CLIServer) RunGlobalCheck(args *Args, r *Result) error {
-	fmt.Printf("ZZZ Run global check %#v\n", *args)
-
-	msg := s.node.NewMessage(RunChecks, args.Params)
+	msg := s.node.NewMessage(RunChecks)
+	msg.Params = args.Params
 	return s.node.ProcessMsg(msg)
 }
 

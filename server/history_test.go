@@ -53,9 +53,9 @@ func TestHistory(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		h := NewHistory(c.size)
+		h := NewHistory(c.size, c.size)
 		for _, op := range c.ops {
-			if h.Observe(op.value) != op.expected {
+			if h.Observe(&Message{ID: op.value}) != op.expected {
 				t.Errorf("Wrong result, expected %d, got %d", op.expected, !op.expected)
 			}
 		}

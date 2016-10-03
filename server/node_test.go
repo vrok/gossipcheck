@@ -1,51 +1,74 @@
 package server
 
 import (
+	"errors"
 	"fmt"
 	"gossipcheck/checks"
+	"log"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/hashicorp/memberlist"
 )
 
-type checkFake struct{ ch chan struct{} }
+// Fake check that fails the first failsMax times and then always succeeds.
+type checkFake struct {
+	wg *sync.WaitGroup
 
-func (fe checkFake) Type() string { return "fake" }
+	fails, failsMax int
+	mu              sync.Mutex
+}
+
+func (fe checkFake) Type() checks.CheckType { return "fake" }
 
 func (fe checkFake) Run(p *checks.Params) error {
-	fe.ch <- struct{}{}
+	log.Print("Fake check running")
+
+	fe.wg.Done()
+
+	fe.mu.Lock()
+	defer fe.mu.Unlock()
+
+	fe.fails++
+	if fe.fails <= fe.failsMax {
+		return errors.New("Fake fail")
+	}
 	return nil
 }
 
-// Fake memberlist.EventDelegate
-type eventDelegFake struct{ ch chan struct{} }
-
-func newEventDelegFake() *eventDelegFake {
-	return &eventDelegFake{make(chan struct{}, 50)}
+func TestNode(t *testing.T) {
+	testProtocol(t, 5, 4)
+	testProtocol(t, 20, 4)
+	testProtocol(t, 50, 4)
+	testProtocol(t, 50, 2)
+	//testProtocol(t, 200, 5) // this can drain all file descriptors
+	//testProtocol(t, 20, 1) // this will converge slowly
 }
 
-func (d eventDelegFake) NotifyJoin(*Node)   { d.ch <- struct{}{} }
-func (d eventDelegFake) NotifyLeave(*Node)  {}
-func (d eventDelegFake) NotifyUpdate(*Node) {}
-
-func TestNode(t *testing.T) {
-	n := 5
-
+func testProtocol(t *testing.T, nodeCount, gossipGroup int) {
 	var nodes []*Node
 	var addrs []string
 
-	eventCh := make(chan memberlist.NodeEvent, 50)
+	probe := func() {
+		for _, n := range nodes {
+			fmt.Printf("%d ", len(n.Members()))
+		}
+		fmt.Println()
+	}
+
+	eventCh := make(chan memberlist.NodeEvent, 3*nodeCount*nodeCount)
 	events := memberlist.ChannelEventDelegate{Ch: eventCh}
 
-	for i := 0; i < n; i++ {
+	wg := &sync.WaitGroup{}
+	wg.Add(nodeCount)
+
+	chk := checkFake{wg: wg, fails: 1}
+	checks.AddCheck(chk)
+
+	for i := 0; i < nodeCount; i++ {
 		addr := fmt.Sprintf("127.0.0.1:%d", 3400+i)
 		fmt.Println("Starting " + addr)
-		//ns := []string{}
-		//if len(addrs) > 0 {
-		//	ns = addrs[len(addrs)-1 : len(addrs)]
-		//}
-		//n, err := NewNode(addr, ns)
 
 		// Let it connect to all nodes so that we don't have to wait for SWIM to converge.
 		n, err := NewNode(addr)
@@ -54,7 +77,17 @@ func TestNode(t *testing.T) {
 		}
 
 		n.config.Events = &events
+		//n.config.GossipNodes = gossipGroup
+		n.GossipNodes = gossipGroup
 
+		//var jn []string
+		//if len(addrs) > 0 {
+		//	jn = append(jn, addrs[i-1])
+		//}
+		//err = n.Join(jn)
+
+		// Join to all nodes - we don't want to test memberlist, so make it converge
+		// as soon as possible.
 		err = n.Join(addrs)
 		if err != nil {
 			t.Fatal(err)
@@ -65,7 +98,7 @@ func TestNode(t *testing.T) {
 
 	// Wait for the protocol to converge.
 
-	timeout := time.After(2 * time.Second)
+	timeout := time.After(100 * time.Second)
 	counter := 0
 loop:
 	for {
@@ -74,37 +107,46 @@ loop:
 			if event.Event == memberlist.NodeJoin {
 				counter++
 				// Everyone knows about everytone
-				if counter == n*n {
+				if counter == nodeCount*nodeCount {
 					break loop
 				}
 			}
+			probe()
 		case <-timeout:
 			t.Fatal("Didn't converge in time")
 		}
 	}
 
-	for i, n := range nodes {
-		fmt.Printf("ZZZ node %d has %d peers\n", i, len(n.Members()))
+	fmt.Println("Memberlist converged")
+
+	msg := nodes[0].NewMessage(RunChecks)
+	msg.Params = checks.ParamsGroup{
+		&checks.Params{Type: "fake"},
 	}
 
-	time.Sleep(1 * time.Second)
+	// The first node sends a message.
+	nodes[0].ProcessMsg(msg)
 
-	fmt.Println("")
-	for i, n := range nodes {
-		fmt.Printf("ZZZ node %d has %d peers\n", i, len(n.Members()))
+	fmt.Println("Waiting...")
+
+	done := make(chan struct{})
+
+	go func() {
+		// Wait until every node processes the message.
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Every node got the message.
+	case <-time.After(100 * time.Second):
+		t.Fatal("Test timed out, not every node processed the message.")
 	}
 
-	msg := nodes[0].NewMessage(RunChecks, []*checks.Params{
-		&checks.Params{Type: "check_empty"},
-	})
-
-	nodes[0].SendMsg(msg, nodes[0].Members()[:2])
-
-	//nodes[0].Send([]byte("bla"))
-
-	//time.Sleep(2 * time.Second)
-
-	time.Sleep(5 * time.Second)
+	for _, n := range nodes {
+		n.Shutdown()
+	}
 }
 
 func TestSelectPeers(t *testing.T) {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sync"
 )
 
 type CheckType string
@@ -16,34 +17,25 @@ const (
 	CheckProcRunning            = "proc_running"
 )
 
-// Converve bytes in the gossip protocol.
+// There's a fixed number of check types, so there's an opportunity to save
+// bandwidth in the gossip protocol by avoiding sending full type names.
 func (ct CheckType) GobEncode() ([]byte, error) {
-	switch ct {
-	case CheckFileContains:
-		return []byte{0}, nil
-	case CheckFileExists:
-		return []byte{1}, nil
-	case CheckProcRunning:
-		return []byte{2}, nil
+	id, ok := typeToID[ct]
+	if !ok {
+		return nil, errors.New("Unexpected check")
 	}
-	return nil, errors.New("Unexpected check")
+	return []byte{id}, nil
 }
 
-// Converve bytes in the gossip protocol.
 func (ct *CheckType) GobDecode(b []byte) error {
 	if len(b) != 1 {
 		return errors.New("Bad lengh")
 	}
-	switch b[0] {
-	case 0:
-		*ct = CheckFileContains
-	case 1:
-		*ct = CheckFileExists
-	case 2:
-		*ct = CheckProcRunning
-	default:
+	typ, ok := idToType[b[0]]
+	if !ok {
 		return errors.New("Unexpected byte")
 	}
+	*ct = typ
 	return nil
 }
 
@@ -51,7 +43,7 @@ type Params struct {
 	// Name of the check, should be unique.
 	Name string
 	// Type of the check.
-	Type string
+	Type CheckType
 	// For file checks, contains a path to an arbitrary file.
 	// For process checks, can be empty (then it's ignored) or point to an executable file.
 	Path string
@@ -62,14 +54,49 @@ type Params struct {
 	Action string
 }
 
+type ParamsGroup []*Params
+
+// Run all checks from a group and return all non-nil errors.
+func (pg ParamsGroup) Run() (errs []error) {
+	errCh := make(chan error, len(pg))
+	// Similar to /x/sync/errgroup, but collects all errors, not just one.
+	var wg sync.WaitGroup
+	for _, p := range pg {
+		chk, ok := GetCheck(p.Type)
+		if !ok {
+			errs = append(errs, errors.New("Unknown check: "+p.Name))
+			continue
+		}
+		wg.Add(1)
+		go func(p *Params) {
+			err := chk.Run(p)
+			if err != nil {
+				errCh <- err
+			}
+			wg.Done()
+		}(p)
+	}
+
+	go func() {
+		wg.Wait()
+		close(errCh)
+	}()
+
+	// Collect results from all checks.
+	for err := range errCh {
+		errs = append(errs, err)
+	}
+	return errs
+}
+
 type Check interface {
-	Type() string
+	Type() CheckType
 	Run(*Params) error
 }
 
 type fileExistsCheck struct{}
 
-func (fe fileExistsCheck) Type() string { return "file_exists" }
+func (fe fileExistsCheck) Type() CheckType { return "file_exists" }
 
 func (fe fileExistsCheck) Run(p *Params) error {
 	if _, err := os.Stat(p.Path); err != nil {
@@ -80,7 +107,7 @@ func (fe fileExistsCheck) Run(p *Params) error {
 
 type fileContainsCheck struct{}
 
-func (fc fileContainsCheck) Type() string { return "file_contains" }
+func (fc fileContainsCheck) Type() CheckType { return "file_contains" }
 
 func (fc fileContainsCheck) Run(p *Params) error {
 	log.Println("file contains check")
@@ -89,7 +116,7 @@ func (fc fileContainsCheck) Run(p *Params) error {
 
 type procRunningCheck struct{}
 
-func (fc procRunningCheck) Type() string { return "process_running" }
+func (fc procRunningCheck) Type() CheckType { return "process_running" }
 
 func (fc procRunningCheck) Run(p *Params) error {
 	log.Println("proc running check")
@@ -99,7 +126,7 @@ func (fc procRunningCheck) Run(p *Params) error {
 // Useful for testing. Always succeeds when check is empty, fails otherwise.
 type checkEmpty struct{}
 
-func (fe checkEmpty) Type() string { return "check_empty" }
+func (fe checkEmpty) Type() CheckType { return "check_empty" }
 
 func (fe checkEmpty) Run(p *Params) error {
 	if p.Check != "" {
@@ -108,17 +135,26 @@ func (fe checkEmpty) Run(p *Params) error {
 	return nil
 }
 
-var nameToCheck map[string]Check
+var (
+	typeToCheck = make(map[CheckType]Check)
+	typeToID    = make(map[CheckType]byte)
+	idToType    = make(map[byte]CheckType)
+	maxID       byte
+)
 
+// Don't add checks in places other than init() and tests initialisation.
 func AddCheck(ch Check) {
 	gob.Register(ch)
-	nameToCheck[ch.Type()] = ch
+	typeToCheck[ch.Type()] = ch
+	typeToID[ch.Type()] = maxID
+	idToType[maxID] = ch.Type()
+	maxID++
 }
 
 func init() {
-	nameToCheck = make(map[string]Check)
-
 	// Register all checks. This is the only place where new checks have to be added.
+	// WARNING: Changing order in which checks are added chacnges the way they are
+	// serialized on the wire.
 	for _, ch := range []Check{
 		fileExistsCheck{},
 		fileContainsCheck{},
@@ -130,7 +166,7 @@ func init() {
 }
 
 // Return a check with given name.
-func GetCheck(name string) (ch Check, ok bool) {
-	ch, ok = nameToCheck[name]
+func GetCheck(typ CheckType) (ch Check, ok bool) {
+	ch, ok = typeToCheck[typ]
 	return
 }

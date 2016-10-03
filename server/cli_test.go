@@ -34,7 +34,7 @@ func TestCli(t *testing.T) {
 		var args Args
 		var result Result
 
-		args.Params = []*checks.Params{c.params}
+		args.Params = checks.ParamsGroup{c.params}
 		err = client.Call("CLIServer.RunLocalCheck", &args, &result)
 		if err != c.err && err.Error() != c.err.Error() {
 			t.Error(err)

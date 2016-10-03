@@ -48,17 +48,13 @@ func loadChecks() ([]*checks.Params, error) {
 		list = append(list, &params)
 	}
 
-	// Sort alphabetically by name. It's the order checks in a batch will be run.
+	// Sort alphabetically by name.
 	sort.Sort(sliceOfParams(list))
 
 	return list, nil
 }
 
-func check(args []string) {
-
-}
-
-func localCheck(args []string) error {
+func check(scope string, args []string) error {
 	var err error
 	var chArgs server.Args
 	var chResult server.Result
@@ -73,7 +69,7 @@ func localCheck(args []string) error {
 		return err
 	}
 
-	err = client.Call("CLIServer.RunLocalCheck", &chArgs, &chResult)
+	err = client.Call("CLIServer.Run"+scope+"Check", &chArgs, &chResult)
 
 	if err != nil {
 		return err
@@ -114,8 +110,9 @@ func main() {
 
 	switch args[0] {
 	case "check":
+		err = check("Global", args[1:])
 	case "local-check":
-		err = localCheck(args[1:])
+		err = check("Local", args[1:])
 	case "list-members":
 	case "help":
 		flag.Usage()
