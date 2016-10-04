@@ -29,6 +29,9 @@ const (
 
 // GobEncode is here to implement gob.GobEncoder. See the docs for CheckType to know why.
 func (ct CheckType) GobEncode() ([]byte, error) {
+	mu.RLock()
+	defer mu.RUnlock()
+
 	id, ok := typeToID[ct]
 	if !ok {
 		return nil, errors.New("Unexpected check")
@@ -38,6 +41,9 @@ func (ct CheckType) GobEncode() ([]byte, error) {
 
 // GobDecode is here to implement gob.GobDecoder. See the docs for CheckType to know why.
 func (ct *CheckType) GobDecode(b []byte) error {
+	mu.RLock()
+	defer mu.RUnlock()
+
 	if len(b) != 1 {
 		return errors.New("Bad lengh")
 	}
@@ -63,32 +69,42 @@ type Params struct {
 	Check string
 	// Command that will be run if this check fails.
 	Action string
+	// Messages can be attached to checks when transferred on the wire.
+	// They have no effect when put in JSON files.
+	Message string
 }
 
 // ParamsGroup describes a batch of checks to be performed.
 type ParamsGroup []*Params
 
 // Run all checks from a group and return all non-nil errors.
-func (pg ParamsGroup) Run() (errs []error) {
-	errCh := make(chan error, len(pg))
+func (pg ParamsGroup) Run() (errs map[string]error) {
+	type nameErrPair struct {
+		name string
+		err  error
+	}
+	errs = make(map[string]error)
+
+	errCh := make(chan *nameErrPair, len(pg))
 	// Similar to /x/sync/errgroup, but collects all errors, not just one.
 	var wg sync.WaitGroup
 	for _, p := range pg {
 		chk, ok := GetCheck(p.Type)
 		if !ok {
-			errs = append(errs, errors.New("Unknown check: "+p.Name))
+			log.Print("Unknown check: " + p.Name)
 			continue
 		}
 		wg.Add(1)
 		go func(p *Params) {
 			err := chk.Run(p)
 			if err != nil {
-				errCh <- err
+				errCh <- &nameErrPair{p.Name, err}
 			}
 			if p.Action != "" {
 				cmd := exec.Command("sh", "-c", p.Action)
 				output, err := cmd.CombinedOutput()
-				log.Printf("Ran '%s' because check %s failed, output:\n%s\n", p.Action, p.Name, string(output))
+				log.Printf("Ran '%s' because check %s failed, output:\n%s\n",
+					p.Action, p.Name, string(output))
 				if err != nil {
 					log.Printf("Running '%s' returned error: %s", p.Action, err)
 				}
@@ -103,8 +119,8 @@ func (pg ParamsGroup) Run() (errs []error) {
 	}()
 
 	// Collect results from all checks.
-	for err := range errCh {
-		errs = append(errs, err)
+	for p := range errCh {
+		errs[p.name] = p.err
 	}
 	return errs
 }
@@ -255,11 +271,14 @@ var (
 	typeToID    = make(map[CheckType]byte)
 	idToType    = make(map[byte]CheckType)
 	maxID       byte
+	mu          sync.RWMutex
 )
 
-// AddCheck registers a checker. Don't use it after any node started working
-// (init and tests initialisation are okay).
+// AddCheck registers a checker.
 func AddCheck(ch Checker) {
+	mu.Lock()
+	defer mu.Unlock()
+
 	gob.Register(ch)
 	typeToCheck[ch.Type()] = ch
 	typeToID[ch.Type()] = maxID
@@ -283,6 +302,9 @@ func init() {
 
 // GetCheck returns a check with given name (if it was registered).
 func GetCheck(typ CheckType) (ch Checker, ok bool) {
+	mu.RLock()
+	defer mu.RUnlock()
+
 	ch, ok = typeToCheck[typ]
 	return
 }

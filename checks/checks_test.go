@@ -70,21 +70,21 @@ func TestParamsGroup(t *testing.T) {
 	}{
 		{
 			ParamsGroup{
-				&Params{Type: "check_empty", Check: "not_empty"}, // Fail
-				&Params{Type: "check_empty"},                     // Succeed
-				&Params{Type: "check_empty", Check: "not_empty"}, // Fail
+				&Params{Name: "a", Type: "check_empty", Check: "not_empty"}, // Fail
+				&Params{Name: "b", Type: "check_empty"},                     // Succeed
+				&Params{Name: "c", Type: "check_empty", Check: "not_empty"}, // Fail
 			},
 			2,
 		},
 		{
 			ParamsGroup{
-				&Params{Type: "check_empty"}, // Succeed
+				&Params{Name: "a", Type: "check_empty"}, // Succeed
 			},
 			0,
 		},
 		{
 			ParamsGroup{
-				&Params{Type: "check_empty", Check: "not_empty"}, // Fail
+				&Params{Name: "a", Type: "check_empty", Check: "not_empty"}, // Fail
 			},
 			1,
 		},

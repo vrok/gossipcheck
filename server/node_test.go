@@ -40,13 +40,16 @@ func (fe *checkFake) Run(p *checks.Params) error {
 func TestNode(t *testing.T) {
 	testProtocol(t, 5, 4)
 	testProtocol(t, 20, 4)
-	testProtocol(t, 50, 4)
+	testProtocol(t, 50, 6)
 	testProtocol(t, 50, 2)
 	//testProtocol(t, 200, 5) // this can drain all file descriptors
 	//testProtocol(t, 20, 1) // this will converge slowly
 }
 
 func testProtocol(t *testing.T, nodeCount, gossipGroup int) {
+	// Setup a cluster of nodes, wait for memberlist to converge, then send
+	// a check into it and wait for all nodes to run it.
+
 	var nodes []*Node
 	var addrs []string
 
@@ -79,12 +82,6 @@ func testProtocol(t *testing.T, nodeCount, gossipGroup int) {
 		n.config.Events = &events
 		//n.config.GossipNodes = gossipGroup
 		n.GossipNodes = gossipGroup
-
-		//var jn []string
-		//if len(addrs) > 0 {
-		//	jn = append(jn, addrs[i-1])
-		//}
-		//err = n.Join(jn)
 
 		// Join to all nodes - we don't want to test memberlist, so make it converge
 		// as soon as possible.
@@ -140,6 +137,7 @@ loop:
 	select {
 	case <-done:
 		// Every node got the message.
+		fmt.Println("Done")
 	case <-time.After(100 * time.Second):
 		t.Fatal("Test timed out, not every node processed the message.")
 	}

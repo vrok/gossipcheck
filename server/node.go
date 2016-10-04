@@ -5,6 +5,7 @@ import (
 	"encoding/gob"
 	"errors"
 	"fmt"
+	"gossipcheck/checks"
 	"log"
 	"math/rand"
 	"net"
@@ -243,6 +244,34 @@ func (n *Node) findPeer(id string) *memberlist.Node {
 	return nil
 }
 
+func (n *Node) runChecks(requester *memberlist.Node, pg checks.ParamsGroup) {
+	go func() {
+		errs := pg.Run()
+
+		if len(errs) == 0 {
+			return
+		}
+
+		/*  // TODO(vrok): Feedback information. It's commented out because the
+		    // other side is not implemented yet.
+
+			msg := n.NewMessage(CheckFailed)
+			msg.Params = checks.ParamsGroup{}
+
+			for name, err := range errs {
+				msg.Params = append(msg.Params, &checks.Params{
+					Name:    name,
+					Message: err.Error(),
+				})
+			}
+
+			if err := n.SendMsg(msg, []*memberlist.Node{requester}); err != nil {
+				log.Println("Sending failed checks failed: " + err.Error())
+			}
+		*/
+	}()
+}
+
 func (n *Node) ProcessMsg(m *Message) error {
 	if !m.IsOneOff() && n.history.Observe(m) {
 		// Already processed a message with this ID.
@@ -253,7 +282,11 @@ func (n *Node) ProcessMsg(m *Message) error {
 	switch m.Type {
 	case RunChecks:
 		log.Print("Received new checks to run")
-		go m.Params.Run()
+		//go m.Params.Run()
+		peer := n.findPeer(m.OrigNode)
+		if peer != nil {
+			n.runChecks(peer, m.Params)
+		}
 		peers := selectPeers(n.GossipNodes, n.Members(), []string{m.SrcNode, m.OrigNode, n.name})
 		m.SrcNode = n.name
 		return n.SendMsg(m, peers)
@@ -280,6 +313,7 @@ func (n *Node) ProcessMsg(m *Message) error {
 		}
 
 		for _, m := range msgs {
+			m := m             // Shallow copy, but it's fine
 			m.SrcNode = n.name // Actually, this should already be set
 			err := n.SendMsg(m, []*memberlist.Node{peer})
 			if err != nil {
