@@ -2,7 +2,42 @@
 
 Gossipcheck is a tool that runs checks on a cluster using a gossip-like protocol. A command can be run in response to a failing check.
 
-It is based on the same library that is used in Serf, which implements the SWIM protocol (with some modifications).
+It is based on the same library that is used in Serf (called memberlist), which implements the SWIM protocol (with some modifications).
+
+Unlike Serf, gossipcheck doesn't piggyback its messages in SWIM datagrams. That's because they are can be large and wouldn't fit into UDP packets. `memberlist` is used mostly for handling membership changes, `gossipcheck` actually uses its own SWIM-like layer on top of `memberlist`. The biggest difference is that - since we're not piggybacking on SWIM messages (that are send with a fixed frequency) - when a new batch of jobs appears, we can distribute it as fast as possible. It is called the "burst" phase. It is still possible that the batch won't reach a small number of nodes in the first phase (though with a good gossip group size the chance is minimal), but then there's the second phase that's exactly like SWIM, that eventually delivers the message everywhere.
+
+## Installation
+
+```
+go get -u github.com/vrok/gossipcheck/cmd/gcheck 
+go get -u github.com/vrok/gossipcheck/cmd/gossipcheckd
+```
+
+Run `gcheck -h` and `gossipcheckd -h` for information about available parameters.
+
+```
+> gossipcheckd -h
+Usage of gossipcheckd:
+  -bind string
+    	The address used for communication with other nodes (default ":3505")
+  -cli-bind string
+    	The address where CLI client connects to (default "127.0.0.1:5924")
+  -gossip-group int
+    	Number of nodes that this node will talk to in every iteration (default 5)
+  -no-cli
+    	Don't start command line RPC server
+  -peers string
+    	Comma-separated list of addresses of initial peers (empty for the first node)
+      
+> gcheck -h
+Usage of gcheck:
+  -file string
+    	JSON file with checks to run
+  -server string
+    	The address where CLI client connects to (default "127.0.0.1:5924")
+```
+
+A simple tutorial is below.
 
 ## Checks
 
