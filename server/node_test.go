@@ -3,13 +3,13 @@ package server
 import (
 	"errors"
 	"fmt"
-	"gossipcheck/checks"
 	"log"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/hashicorp/memberlist"
+	"github.com/vrok/gossipcheck/checks"
 )
 
 // Fake check that fails the first failsMax times and then always succeeds.

@@ -1,6 +1,6 @@
 package server
 
-import "gossipcheck/checks"
+import "github.com/vrok/gossipcheck/checks"
 
 // MsgType represents the message type used in the checks gossip protocol.
 type MsgType int

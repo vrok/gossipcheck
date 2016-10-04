@@ -2,10 +2,11 @@ package server
 
 import (
 	"fmt"
-	"gossipcheck/checks"
 	"net"
 	"net/http"
 	"net/rpc"
+
+	"github.com/vrok/gossipcheck/checks"
 )
 
 // CLIServer represents a running command line RPC server that is attached

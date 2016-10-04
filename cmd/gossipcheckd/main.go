@@ -3,12 +3,13 @@ package main
 import (
 	"flag"
 	"fmt"
-	"gossipcheck/server"
 	"log"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
+
+	"github.com/vrok/gossipcheck/server"
 )
 
 var (

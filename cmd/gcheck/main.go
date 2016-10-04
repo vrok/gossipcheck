@@ -4,13 +4,13 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"gossipcheck/checks"
 	"io/ioutil"
 	"net/rpc"
 	"os"
 	"sort"
 
-	"gossipcheck/server"
+	"github.com/vrok/gossipcheck/checks"
+	"github.com/vrok/gossipcheck/server"
 )
 
 var (

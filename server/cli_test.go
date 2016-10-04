@@ -2,10 +2,11 @@ package server
 
 import (
 	"errors"
-	"gossipcheck/checks"
 	"log"
 	"net/rpc"
 	"testing"
+
+	"github.com/vrok/gossipcheck/checks"
 )
 
 func TestCli(t *testing.T) {

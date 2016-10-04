@@ -1,11 +1,12 @@
 package main
 
 import (
-	"gossipcheck/checks"
 	"io/ioutil"
 	"os"
 	"reflect"
 	"testing"
+
+	"github.com/vrok/gossipcheck/checks"
 )
 
 func TestLoadChecks(t *testing.T) {

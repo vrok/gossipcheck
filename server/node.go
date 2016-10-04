@@ -5,13 +5,14 @@ import (
 	"encoding/gob"
 	"errors"
 	"fmt"
-	"gossipcheck/checks"
 	"log"
 	"math/rand"
 	"net"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/vrok/gossipcheck/checks"
 
 	"github.com/hashicorp/memberlist"
 )
