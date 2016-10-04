@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 	"sync"
@@ -83,6 +84,14 @@ func (pg ParamsGroup) Run() (errs []error) {
 			err := chk.Run(p)
 			if err != nil {
 				errCh <- err
+			}
+			if p.Action != "" {
+				cmd := exec.Command("sh", "-c", p.Action)
+				output, err := cmd.CombinedOutput()
+				log.Printf("Ran '%s' because check %s failed, output:\n%s\n", p.Action, p.Name, string(output))
+				if err != nil {
+					log.Printf("Running '%s' returned error: %s", p.Action, err)
+				}
 			}
 			wg.Done()
 		}(p)

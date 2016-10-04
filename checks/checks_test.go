@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"encoding/gob"
 	"errors"
+	"fmt"
 	"io/ioutil"
 	"os"
+	"os/signal"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func TestCustomGob(t *testing.T) {
@@ -91,6 +95,29 @@ func TestParamsGroup(t *testing.T) {
 		if len(errs) != c.errors {
 			t.Fatalf("Wrong number of errors: %d", len(errs))
 		}
+	}
+}
+
+func TestRunAction(t *testing.T) {
+	sigusr1 := make(chan os.Signal, 1)
+	signal.Notify(sigusr1, syscall.SIGUSR1)
+	defer signal.Reset(syscall.SIGUSR1)
+
+	pg := ParamsGroup{
+		&Params{
+			Type:   "check_empty",
+			Check:  "not_empty",
+			Action: fmt.Sprintf("kill -s USR1 %d", os.Getpid()),
+		},
+	}
+
+	pg.Run()
+
+	select {
+	case <-sigusr1:
+		// kill was run
+	case <-time.After(5 * time.Second):
+		t.Fatal("Test timed out")
 	}
 }
 
