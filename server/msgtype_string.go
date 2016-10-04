@@ -4,9 +4,9 @@ package server
 
 import "fmt"
 
-const _MsgType_name = "RunChecksAdvertiseMsgsReqestMsgsInstallChecksDeleteChecksCheckFailed"
+const _MsgType_name = "RunChecksAdvertiseMsgsRequestMsgs"
 
-var _MsgType_index = [...]uint8{0, 9, 22, 32, 45, 57, 68}
+var _MsgType_index = [...]uint8{0, 9, 22, 33}
 
 func (i MsgType) String() string {
 	if i < 0 || i >= MsgType(len(_MsgType_index)-1) {

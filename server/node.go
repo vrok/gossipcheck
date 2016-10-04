@@ -12,8 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/vrok/gossipcheck/checks"
-
 	"github.com/hashicorp/memberlist"
 )
 
@@ -246,34 +244,6 @@ func (n *Node) findPeer(id string) *memberlist.Node {
 	return nil
 }
 
-func (n *Node) runChecks(requester *memberlist.Node, pg checks.ParamsGroup) {
-	go func() {
-		errs := pg.Run()
-
-		if len(errs) == 0 {
-			return
-		}
-
-		/*  // TODO(vrok): Feedback information. It's commented out because the
-		    // other side is not implemented yet.
-
-			msg := n.NewMessage(CheckFailed)
-			msg.Params = checks.ParamsGroup{}
-
-			for name, err := range errs {
-				msg.Params = append(msg.Params, &checks.Params{
-					Name:    name,
-					Message: err.Error(),
-				})
-			}
-
-			if err := n.SendMsg(msg, []*memberlist.Node{requester}); err != nil {
-				log.Println("Sending failed checks failed: " + err.Error())
-			}
-		*/
-	}()
-}
-
 // ProcessMsg handles arriving messages. It is used both internally (for incoming messages),
 // and externally (e.g. the CLI server simply runs ProcessNode with a locally-created message).
 func (n *Node) ProcessMsg(m *Message) error {
@@ -286,10 +256,7 @@ func (n *Node) ProcessMsg(m *Message) error {
 	switch m.Type {
 	case RunChecks:
 		log.Print("Received new checks to run")
-		peer := n.findPeer(m.OrigNode)
-		if peer != nil {
-			n.runChecks(peer, m.Params)
-		}
+		go m.Params.Run()
 		peers := selectPeers(n.GossipNodes, n.Members(), []string{m.SrcNode, m.OrigNode, n.name})
 		m.SrcNode = n.name
 		return n.SendMsg(m, peers)
@@ -325,12 +292,6 @@ func (n *Node) ProcessMsg(m *Message) error {
 				return err
 			}
 		}
-	case InstallChecks:
-		panic("todo")
-	case DeleteChecks:
-		panic("todo")
-	case CheckFailed:
-		panic("todo")
 	default:
 		return errors.New("Unknown message type")
 	}

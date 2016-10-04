@@ -18,15 +18,6 @@ const (
 	// RequestMsgs is sent in response to AdvertiseMsgs.
 	// This way, a node can request missing messages from another node.
 	RequestMsgs
-	// InstallChecks installs checks to be running continually.
-	// Warning: Not implemented yet.
-	InstallChecks
-	// DeleteChecks removes installed checks.
-	// Warning: Not implemented yet.
-	DeleteChecks
-	// CheckFailed informs the source node about failed checks.
-	// Warning: Not (fully) implemented yet.
-	CheckFailed
 )
 
 // Message represents a message that is transmitted in gobs between nodes.
@@ -38,9 +29,7 @@ type Message struct {
 	OrigNode string
 	// Node that (re)sent this message previously.
 	SrcNode string
-	// For requests that don't carry full definitions (likeDeleteChecks and
-	// CheckFailed), only Params.Name is filled, the rest of the fields are
-	// set to zero values (they are skipped in gobs).
+	// Definitions of checks.
 	Params checks.ParamsGroup
 	// Used by AdvertiseMsgs and ReqestMsgs.
 	MessageIDs []string
