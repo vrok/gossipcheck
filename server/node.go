@@ -142,9 +142,9 @@ func selectPeers(count int, members []*memberlist.Node, excepts []string) []*mem
 	l := len(members)
 	var selected []*memberlist.Node
 
-	maxCount := len(members) - len(excepts)
-	if count > maxCount {
-		count = maxCount
+	exceptSet := make(map[string]struct{}, len(excepts))
+	for _, e := range excepts {
+		exceptSet[e] = struct{}{}
 	}
 
 outer:
@@ -159,13 +159,12 @@ outer:
 
 		name := members[n].Name
 
-		for _, e := range excepts {
-			if e == name {
-				continue outer
-			}
+		_, ok := exceptSet[name]
+		if ok {
+			continue outer
 		}
 
-		excepts = append(excepts, name)
+		exceptSet[name] = struct{}{}
 		selected = append(selected, members[n])
 	}
 	return selected
@@ -202,6 +201,9 @@ func (n *Node) SendMsg(m *Message, members []*memberlist.Node) error {
 
 func (n *Node) Shutdown() {
 	close(n.done)
+	if err := n.list.Leave(1 * time.Second); err != nil {
+		log.Print("Error leaving the cluster: " + err.Error())
+	}
 	if err := n.list.Shutdown(); err != nil {
 		log.Print("Error shutting down: " + err.Error())
 	}
@@ -214,6 +216,9 @@ func (n *Node) runAdvertiser() {
 			case <-time.After(n.AdvertInterval):
 				msg := n.NewMessage(AdvertiseMsgs)
 				msg.MessageIDs = n.history.MessageIDs()
+				if len(msg.MessageIDs) == 0 {
+					continue
+				}
 
 				peers := selectPeers(n.GossipNodes, n.Members(), []string{n.name})
 				err := n.SendMsg(msg, peers)
@@ -239,9 +244,9 @@ func (n *Node) findPeer(id string) *memberlist.Node {
 }
 
 func (n *Node) ProcessMsg(m *Message) error {
-	if n.history.Observe(m) {
+	if !m.IsOneOff() && n.history.Observe(m) {
 		// Already processed a message with this ID.
-		log.Print("Received an old message")
+		log.Printf("Received an old message %s", m.Type)
 		return nil
 	}
 

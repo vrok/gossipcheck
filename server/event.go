@@ -33,3 +33,8 @@ type Message struct {
 	// Used by AdvertiseMsgs and ReqestMsgs.
 	MessageIDs []string
 }
+
+// One-off messages aren't remembered in the history.
+func (m *Message) IsOneOff() bool {
+	return m.Type == AdvertiseMsgs || m.Type == ReqestMsgs
+}

@@ -3,7 +3,6 @@ package server
 import (
 	"fmt"
 	"gossipcheck/checks"
-	"log"
 	"net"
 	"net/http"
 	"net/rpc"
@@ -40,14 +39,19 @@ func (s *CLIServer) RunLocalCheck(args *Args, r *Result) error {
 	return nil
 }
 
-func StartCLIServer(bind string) {
-	cliServ := new(CLIServer)
-	rpc.Register(cliServ)
+// StartCLIServer starts a new RPC command line interface server
+// that is attached to a Node instance.
+func StartCLIServer(bind string, node *Node) error {
+	cliServ := &CLIServer{node: node}
+	err := rpc.Register(cliServ)
+	if err != nil {
+		return err
+	}
 	rpc.HandleHTTP()
-	l, e := net.Listen("tcp", bind)
-	if e != nil {
-		log.Fatal("listen error:", e)
+	l, err := net.Listen("tcp", bind)
+	if err != nil {
+		return err
 	}
 	go http.Serve(l, nil)
-	//http.Serve(l, nil)
+	return nil
 }

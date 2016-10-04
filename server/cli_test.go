@@ -10,7 +10,7 @@ import (
 
 func TestCli(t *testing.T) {
 	addr := "localhost:4857"
-	StartCLIServer(addr)
+	StartCLIServer(addr, nil)
 	client, err := rpc.DialHTTP("tcp", addr)
 	if err != nil {
 		log.Fatal("dialing:", err)
