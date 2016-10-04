@@ -16,14 +16,15 @@ import (
 	"github.com/hashicorp/memberlist"
 )
 
+// Node represents a running node in the gossipcheck cluster.
 type Node struct {
 	name    string
 	port    int
 	config  *memberlist.Config
 	list    *memberlist.Memberlist
 	history *History
-	// Number of nodes that messages are send directly from a node.
-	// Has the same meaning as GossipNodes in the memberlist library,
+	// Number of nodes that messages are send to directly from a node.
+	// It has the same meaning as GossipNodes in the memberlist library,
 	// but is used for checks. By default, GossipNodes is set to the
 	// same value as in memberlist (can be set to something different,
 	// but only before Node.Join is called).
@@ -69,6 +70,7 @@ func randStr(n int) string {
 	return string(b)
 }
 
+// NewNode creates a new cluster node that will listen on the given address.
 func NewNode(bind string) (*Node, error) {
 	_, portS, err := net.SplitHostPort(bind)
 	if err != nil {
@@ -86,9 +88,8 @@ func NewNode(bind string) (*Node, error) {
 		done:    make(chan struct{}),
 	}
 
-	config := memberlist.DefaultLocalConfig()
-	//config := memberlist.DefaultLANConfig()
-	config.Name += "_" + randStr(8) // memberlist needs unique names to work properly
+	config := memberlist.DefaultLANConfig()
+	config.Name += "_" + randStr(12) // memberlist needs unique names to work properly
 	node.name = config.Name
 	config.BindPort = int(port)
 	config.AdvertisePort = int(port)
@@ -96,15 +97,13 @@ func NewNode(bind string) (*Node, error) {
 
 	node.config = config
 	node.GossipNodes = config.GossipNodes
-	//node.GossipNodes = 1
-	// Don't use exactly the same value as GossipInterval, lest the network usage
-	// spikes overlap.
-	//node.AdvertInterval = config.GossipInterval * 3 / 2
 	node.AdvertInterval = 20 * time.Second
 
 	return node, nil
 }
 
+// Join starts the node, it then tries to join the cluster by connecting to the given
+// peer node addresses.
 func (n *Node) Join(peers []string) error {
 	var err error
 	for i := range peers {
@@ -171,6 +170,7 @@ outer:
 	return selected
 }
 
+// SendMsg sends a message to a list of peer nodes.
 func (n *Node) SendMsg(m *Message, members []*memberlist.Node) error {
 	var buf bytes.Buffer
 	enc := gob.NewEncoder(&buf)
@@ -200,6 +200,7 @@ func (n *Node) SendMsg(m *Message, members []*memberlist.Node) error {
 	return nil
 }
 
+// Shutdown stop the node gracefully.
 func (n *Node) Shutdown() {
 	close(n.done)
 	if err := n.list.Leave(1 * time.Second); err != nil {
@@ -272,6 +273,8 @@ func (n *Node) runChecks(requester *memberlist.Node, pg checks.ParamsGroup) {
 	}()
 }
 
+// ProcessMsg handles arriving messages. It is used both internally (for incoming messages),
+// and externally (e.g. the CLI server simply runs ProcessNode with a locally-created message).
 func (n *Node) ProcessMsg(m *Message) error {
 	if !m.IsOneOff() && n.history.Observe(m) {
 		// Already processed a message with this ID.
@@ -282,7 +285,6 @@ func (n *Node) ProcessMsg(m *Message) error {
 	switch m.Type {
 	case RunChecks:
 		log.Print("Received new checks to run")
-		//go m.Params.Run()
 		peer := n.findPeer(m.OrigNode)
 		if peer != nil {
 			n.runChecks(peer, m.Params)
@@ -293,7 +295,7 @@ func (n *Node) ProcessMsg(m *Message) error {
 	case AdvertiseMsgs:
 		missing := n.history.MissingIDs(m.MessageIDs)
 		if len(missing) > 0 {
-			reqMsg := n.NewMessage(ReqestMsgs)
+			reqMsg := n.NewMessage(RequestMsgs)
 			reqMsg.MessageIDs = missing
 
 			peer := n.findPeer(m.OrigNode)
@@ -302,7 +304,7 @@ func (n *Node) ProcessMsg(m *Message) error {
 			}
 			return n.SendMsg(reqMsg, []*memberlist.Node{peer})
 		}
-	case ReqestMsgs:
+	case RequestMsgs:
 		msgs := n.history.GetMessages(m.MessageIDs)
 		if len(msgs) == 0 {
 			return nil
@@ -334,13 +336,8 @@ func (n *Node) ProcessMsg(m *Message) error {
 	return nil
 }
 
+// Members returns a list of all cluster members known to the node.
 func (n *Node) Members() []*memberlist.Node {
 	// Memberlist.Members() is thread-safe.
 	return n.list.Members()
-}
-
-func (n *Node) Send(b []byte) {
-	for _, peer := range n.Members() {
-		n.list.SendToTCP(peer, b)
-	}
 }

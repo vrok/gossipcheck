@@ -209,12 +209,12 @@ var num = regexp.MustCompile("^\\d+$")
 func fetchProcessExeAndArgs(pid string) (exe string, args string, err error) {
 	exe, err = os.Readlink(fmt.Sprintf("/proc/%s/exe", pid))
 	if err != nil {
-		return "", "", fmt.Errorf("Couldn't read link for pid %d: %s", pid, err)
+		return "", "", fmt.Errorf("Couldn't read link for pid %s: %s", pid, err)
 	}
 
 	raw, err := ioutil.ReadFile(fmt.Sprintf("/proc/%s/cmdline", pid))
 	if err != nil {
-		return "", "", fmt.Errorf("Couldn't read arguments for pid %d: %s", pid, err)
+		return "", "", fmt.Errorf("Couldn't read arguments for pid %s: %s", pid, err)
 	}
 
 	// Items in cmdline files are separated with 0x00 byte

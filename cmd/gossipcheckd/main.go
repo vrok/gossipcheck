@@ -33,6 +33,8 @@ func main() {
 		os.Exit(1)
 	}
 
+	n.GossipNodes = *gossipGroup
+
 	if !*noCLI {
 		err = server.StartCLIServer(*cliBind, n)
 		if err != nil {

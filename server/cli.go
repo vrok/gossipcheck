@@ -8,23 +8,33 @@ import (
 	"net/rpc"
 )
 
+// CLIServer represents a running command line RPC server that is attached
+// to a gossip protocol node. Command line client can connect to it and
+// send checks through it to the cluster.
 type CLIServer struct {
 	// Local node
 	node *Node
 }
 
+// Args represents arguments for Go's RPC.
 type Args struct {
 	Params checks.ParamsGroup
 }
 
+// Result represents results for Go's RPC.
+// Right now we only return errors so it's empty.
 type Result struct{}
 
+// RunGlobalCheck is an RPC-exposed function that sends a check to the
+// attached node, which is then spread to the whole cluster.
 func (s *CLIServer) RunGlobalCheck(args *Args, r *Result) error {
 	msg := s.node.NewMessage(RunChecks)
 	msg.Params = args.Params
 	return s.node.ProcessMsg(msg)
 }
 
+// RunLocalCheck just runs the check locally. It is useful for testing
+// check before running them on the whole cluster.
 func (s *CLIServer) RunLocalCheck(args *Args, r *Result) error {
 	for _, p := range args.Params {
 		check, ok := checks.GetCheck(p.Type)
