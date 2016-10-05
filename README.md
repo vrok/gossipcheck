@@ -1,6 +1,6 @@
 # gossipcheck
 
-Gossipcheck is a tool that runs checks on a cluster using a gossip-like protocol. A command can be run in response to a failing check.
+Gossipcheck is a tool that runs checks on a cluster using a gossip-like protocol. A command can be run in response to a failing check. Thanks to the gossip-style communication, it is resilient and easily scalable.
 
 It is based on the same library that is used in Serf (called memberlist), which implements the SWIM protocol (with some modifications).
 
