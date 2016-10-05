@@ -9,8 +9,7 @@ Unlike Serf, gossipcheck doesn't piggyback its messages in SWIM datagrams. That'
 ## Installation
 
 ```
-go get -u github.com/vrok/gossipcheck/cmd/gcheck 
-go get -u github.com/vrok/gossipcheck/cmd/gossipcheckd
+go get github.com/vrok/gossipcheck/...
 ```
 
 Run `gcheck -h` and `gossipcheckd -h` for information about available parameters.
