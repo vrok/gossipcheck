@@ -11,7 +11,6 @@ func createTempFile(content string) (name string, err error) {
 	if err != nil {
 		return "", err
 	}
-	//defer os.Remove(f.Name())
 
 	err = ioutil.WriteFile(f.Name(), []byte(content), 0600)
 	if err != nil {
@@ -63,7 +62,7 @@ func TestFileContains(t *testing.T) {
 
 	ch := fileContainsCheck{2}
 
-	for _, c := range cases {
+	for i, c := range cases {
 		f, err := createTempFile(c.content)
 		if err != nil {
 			t.Fatal(err)
@@ -72,7 +71,7 @@ func TestFileContains(t *testing.T) {
 
 		err = ch.Run(&Params{Path: f, Check: c.sep})
 		if (err == nil) != c.found {
-			t.Fatal("Wrong result")
+			t.Fatalf("Wrong result in case %d, %s", i, err)
 		}
 	}
 }

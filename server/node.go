@@ -17,11 +17,6 @@ import (
 
 // Node represents a running node in the gossipcheck cluster.
 type Node struct {
-	name    string
-	port    int
-	config  *memberlist.Config
-	list    *memberlist.Memberlist
-	history *History
 	// Number of nodes that messages are send to directly from a node.
 	// It has the same meaning as GossipNodes in the memberlist library,
 	// but is used for checks. By default, GossipNodes is set to the
@@ -32,53 +27,26 @@ type Node struct {
 	// what messages it has. Nodes can then request missing ones.
 	AdvertInterval time.Duration
 
+	name    string
+	port    int
+	config  *memberlist.Config
+	list    *memberlist.Memberlist
+	history *History
+
 	// Closing this chan shuts everything down.
 	done chan struct{}
 }
 
-// Implements memberlist.Delegate
-type delegate struct {
-	n *Node
-}
-
-func (d *delegate) NodeMeta(limit int) []byte { return nil }
-func (d *delegate) NotifyMsg(msg []byte) {
-	buf := bytes.NewBuffer(msg)
-	dec := gob.NewDecoder(buf)
-
-	var m Message
-	err := dec.Decode(&m)
-	if err != nil {
-		log.Println("Received a malformed message")
-		return
-	}
-
-	d.n.ProcessMsg(&m)
-}
-func (d *delegate) GetBroadcasts(overhead, limit int) [][]byte { return nil }
-func (d *delegate) LocalState(join bool) []byte                { return nil }
-func (d *delegate) MergeRemoteState(buf []byte, join bool)     {}
-
-const lettersCnt = 'z' - 'a'
-
-func randStr(n int) string {
-	b := make([]byte, n)
-	for i := range b {
-		b[i] = byte('a' + rand.Int()%lettersCnt)
-	}
-	return string(b)
-}
-
 // NewNode creates a new cluster node that will listen on the given address.
 func NewNode(bind string) (*Node, error) {
-	_, portS, err := net.SplitHostPort(bind)
+	_, ps, err := net.SplitHostPort(bind)
 	if err != nil {
-		return nil, err
+		return nil, errors.New("Invalid bind address: " + err.Error())
 	}
 
-	port, err := strconv.ParseInt(portS, 10, 64)
+	port, err := strconv.ParseInt(ps, 10, 64)
 	if err != nil {
-		return nil, err
+		return nil, errors.New("Invalid port: " + err.Error())
 	}
 
 	node := &Node{
@@ -88,7 +56,8 @@ func NewNode(bind string) (*Node, error) {
 	}
 
 	config := memberlist.DefaultLANConfig()
-	config.Name += "_" + randStr(12) // memberlist needs unique names to work properly
+	// memberlist needs unique names to work properly
+	config.Name += "_" + randStr(12)
 	node.name = config.Name
 	config.BindPort = int(port)
 	config.AdvertisePort = int(port)
@@ -137,6 +106,9 @@ func (n *Node) NewMessage(typ MsgType) *Message {
 	}
 }
 
+// selectPeers randomly select at most "count" number of random nodes from
+// "members", avoiding those whose names are in "excepts".
+// This is very similar to memberlist's method.
 func selectPeers(count int, members []*memberlist.Node, excepts []string) []*memberlist.Node {
 	l := len(members)
 	var selected []*memberlist.Node
@@ -210,6 +182,10 @@ func (n *Node) Shutdown() {
 	}
 }
 
+// runAdvertiser starts the advertiser goroutine, which periodically advertises
+// IDs of messages it remembers to a number of random nodes. This is in the same
+// vein as message dissemination in the SWIM protocol (the main difference is
+// that IDs of all messages are sent).
 func (n *Node) runAdvertiser() {
 	go func() {
 		for {
@@ -233,6 +209,7 @@ func (n *Node) runAdvertiser() {
 	}()
 }
 
+// findPeer returns a node with the given ID.
 func (n *Node) findPeer(id string) *memberlist.Node {
 	// TODO(vrok): Number of nodes can be big, this linear search is lame. It would be easy
 	// to wrap it in a cache once this pops up during profiling.
@@ -243,6 +220,39 @@ func (n *Node) findPeer(id string) *memberlist.Node {
 	}
 	return nil
 }
+
+// Members returns a list of all cluster members known to the node.
+func (n *Node) Members() []*memberlist.Node {
+	// Memberlist.Members() is thread-safe.
+	return n.list.Members()
+}
+
+// Implements memberlist.Delegate
+type delegate struct {
+	n *Node
+}
+
+// NotifyMsg is the only method in memberlist.Delegate we need. It is run
+// when message from a peer node arrives.
+func (d *delegate) NotifyMsg(msg []byte) {
+	buf := bytes.NewBuffer(msg)
+	dec := gob.NewDecoder(buf)
+
+	var m Message
+	err := dec.Decode(&m)
+	if err != nil {
+		log.Println("Received a malformed message")
+		return
+	}
+
+	d.n.ProcessMsg(&m)
+}
+
+// Stub functions to satisfy the memberlist.Delegate interface.
+func (d *delegate) NodeMeta(limit int) []byte                  { return nil }
+func (d *delegate) GetBroadcasts(overhead, limit int) [][]byte { return nil }
+func (d *delegate) LocalState(join bool) []byte                { return nil }
+func (d *delegate) MergeRemoteState(buf []byte, join bool)     {}
 
 // ProcessMsg handles arriving messages. It is used both internally (for incoming messages),
 // and externally (e.g. the CLI server simply runs ProcessNode with a locally-created message).
@@ -255,51 +265,58 @@ func (n *Node) ProcessMsg(m *Message) error {
 
 	switch m.Type {
 	case RunChecks:
-		log.Print("Received new checks to run")
-		go m.Params.Run()
-		peers := selectPeers(n.GossipNodes, n.Members(), []string{m.SrcNode, m.OrigNode, n.name})
-		m.SrcNode = n.name
-		return n.SendMsg(m, peers)
+		return n.processRunChecks(m)
 	case AdvertiseMsgs:
-		missing := n.history.MissingIDs(m.MessageIDs)
-		if len(missing) > 0 {
-			reqMsg := n.NewMessage(RequestMsgs)
-			reqMsg.MessageIDs = missing
-
-			peer := n.findPeer(m.OrigNode)
-			if peer == nil {
-				return errors.New("Requesting node disappeared")
-			}
-			return n.SendMsg(reqMsg, []*memberlist.Node{peer})
-		}
+		return n.processAdvertiseMsgs(m)
 	case RequestMsgs:
-		msgs := n.history.GetMessages(m.MessageIDs)
-		if len(msgs) == 0 {
-			return nil
-		}
+		return n.processRequestMsgs(m)
+	default:
+		return errors.New("Unknown message type")
+	}
+}
+
+func (n *Node) processRunChecks(m *Message) error {
+	log.Print("Received new checks to run")
+	go m.Params.Run()
+	peers := selectPeers(n.GossipNodes, n.Members(), []string{m.SrcNode, m.OrigNode, n.name})
+	m.SrcNode = n.name
+	return n.SendMsg(m, peers)
+}
+
+func (n *Node) processAdvertiseMsgs(m *Message) error {
+	missing := n.history.MissingIDs(m.MessageIDs)
+	if len(missing) > 0 {
+		reqMsg := n.NewMessage(RequestMsgs)
+		reqMsg.MessageIDs = missing
+
 		peer := n.findPeer(m.OrigNode)
 		if peer == nil {
 			return errors.New("Requesting node disappeared")
 		}
-
-		for _, m := range msgs {
-			m := m             // Shallow copy, but it's fine
-			m.SrcNode = n.name // Actually, this should already be set
-			err := n.SendMsg(m, []*memberlist.Node{peer})
-			if err != nil {
-				// Stop on the first error, if something's wrong with the network
-				// then further tries will probably fail too.
-				return err
-			}
-		}
-	default:
-		return errors.New("Unknown message type")
+		return n.SendMsg(reqMsg, []*memberlist.Node{peer})
 	}
 	return nil
 }
 
-// Members returns a list of all cluster members known to the node.
-func (n *Node) Members() []*memberlist.Node {
-	// Memberlist.Members() is thread-safe.
-	return n.list.Members()
+func (n *Node) processRequestMsgs(m *Message) error {
+	msgs := n.history.GetMessages(m.MessageIDs)
+	if len(msgs) == 0 {
+		return nil
+	}
+	peer := n.findPeer(m.OrigNode)
+	if peer == nil {
+		return errors.New("Requesting node disappeared")
+	}
+
+	for _, m := range msgs {
+		mCopy := *m            // Shallow copy, but it's fine
+		mCopy.SrcNode = n.name // Actually, this should already be set
+		err := n.SendMsg(&mCopy, []*memberlist.Node{peer})
+		if err != nil {
+			// Stop on the first error, if something's wrong with the network
+			// then further tries will probably fail too.
+			return err
+		}
+	}
+	return nil
 }
