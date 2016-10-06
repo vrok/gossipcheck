@@ -2,6 +2,7 @@ package checks
 
 import "os"
 
+// fileExistsCheck implements a checker that checks if a file exists.
 type fileExistsCheck struct{}
 
 func (fe fileExistsCheck) Type() CheckType { return CheckFileExists }

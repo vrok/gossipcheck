@@ -8,13 +8,17 @@ import (
 	"sync"
 )
 
-// Checker is the interface whose implementations can run checks of their types.
+// Checker is the interface whose implementations run checks on nodes.
 type Checker interface {
+	// Type returns a unique value by which checks carried out by this checker
+	// are identified.
 	Type() CheckType
+	// Run executes the check, returns nil if check succeeded. Otherwise,
+	// it should return a non-nil error with information about the cause.
 	Run(*Params) error
 }
 
-// GetCheck returns a check with given name (if it was registered).
+// GetCheck returns a checker with given type (if it was registered).
 func GetCheck(typ CheckType) (ch Checker, ok bool) {
 	mu.RLock()
 	defer mu.RUnlock()
@@ -35,7 +39,7 @@ func AddCheck(ch Checker) {
 	maxID++
 }
 
-// CheckType represents the type of check to be performed.
+// CheckType represents type of the check to be performed.
 // There's a fixed number of check types, so there's an opportunity to save
 // bandwidth in the gossip protocol by avoiding sending full type names,
 // hence the custom gob encoding.
@@ -90,9 +94,12 @@ func (pg ParamsGroup) Run() (errs map[string]error) {
 		wg.Add(1)
 		go func(p *Params) {
 			err := chk.Run(p)
-			if err != nil {
-				errCh <- &nameErrPair{p.Name, err}
+			if err == nil {
+				wg.Done()
+				return
 			}
+
+			errCh <- &nameErrPair{p.Name, err}
 			if p.Action != "" {
 				cmd := exec.Command("sh", "-c", p.Action)
 				output, err := cmd.CombinedOutput()

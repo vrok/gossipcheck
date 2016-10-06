@@ -7,8 +7,10 @@ import (
 	"strings"
 )
 
+// fileContainsCheck implements a checker that checks if a given text is in a file.
+// It can handle very big files (e.g. logs).
 type fileContainsCheck struct {
-	// Batch size is modifiable for tests.
+	// batchMult controls size of the batch that is loaded by fileContainsCheck.
 	batchMult int
 }
 

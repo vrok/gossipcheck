@@ -10,6 +10,14 @@ import (
 	"strings"
 )
 
+// procRunningCheck implements a checker that checks if a process is running.
+// Currently, it only works on systems with procfs.
+// It can be configured in to ways (if both are specified, they are ANDed):
+//   - by specifying (a part of) path of the executable file in "path"
+//   - by specifying (a part of) command used to execute it in "check"
+// The latter greps through actual commands, so e.g. if a symlink was used
+// to run a process, that's what it will see. The former will see the
+// real file.
 type procRunningCheck struct{}
 
 func (fc procRunningCheck) Type() CheckType { return CheckProcRunning }

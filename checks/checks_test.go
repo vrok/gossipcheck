@@ -102,20 +102,44 @@ func TestRunAction(t *testing.T) {
 	signal.Notify(sigusr1, syscall.SIGUSR1)
 	defer signal.Reset(syscall.SIGUSR1)
 
-	pg := ParamsGroup{
-		&Params{
-			Type:   "check_empty",
-			Check:  "not_empty",
-			Action: fmt.Sprintf("kill -s USR1 %d", os.Getpid()),
+	cases := []struct {
+		pg         ParamsGroup
+		shouldExec bool
+	}{
+		{
+			ParamsGroup{
+				&Params{
+					Type:   "check_empty",
+					Check:  "not_empty",
+					Action: fmt.Sprintf("kill -s USR1 %d", os.Getpid()),
+				},
+			},
+			true,
+		},
+		{
+			ParamsGroup{
+				&Params{
+					Type:   "check_empty",
+					Action: fmt.Sprintf("kill -s USR1 %d", os.Getpid()),
+				},
+			},
+			false,
 		},
 	}
 
-	pg.Run()
+	for _, c := range cases {
+		c.pg.Run()
 
-	select {
-	case <-sigusr1:
-		// kill was run
-	case <-time.After(5 * time.Second):
-		t.Fatal("Test timed out")
+		received := false
+		select {
+		case <-sigusr1:
+			// kill was run
+			received = true
+		case <-time.After(100 * time.Millisecond):
+		}
+
+		if received != c.shouldExec {
+			t.Fatal("Action run failed")
+		}
 	}
 }
