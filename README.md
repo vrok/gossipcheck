@@ -93,7 +93,7 @@ Now we have a local cluster of two nodes, and can run some checks on it:
 ./gcheck -file=file.json check
 ```
 
-If your cluster consisted of millions of nodes, then you would probably want to make sure that the checks that you're about to distribute are correct. Fortunately, it is possible to run them just on the local node:
+If your cluster consisted of millions of nodes, then you would probably want to make sure that the checks that you're about to distribute are correct. Fortunately, it is possible to run them just on the local node with the `local-check` command (they are executed sequentially, and it doesn't run actions, so that debugging is easier):
 
 ```
 ./gcheck -file=file.json local-check 
